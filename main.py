@@ -4,7 +4,9 @@ import io
 import sys
 import os
 import json
-from datetime import datetime
+import requests
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 from PIL import Image
 from DrissionPage import ChromiumPage
 import ddddocr
@@ -101,6 +103,44 @@ def get_human_tracks(distance):
         back_distance -= move
 
     return tracks + back_tracks
+
+
+def send_cookies_to_server(data, server_url):
+    """
+    将 Cookie 发送到远程服务器
+    """
+    try:
+        # ---------------------------------------------------------
+        # 1. 数据处理：将字典/列表转换为 "key=value; key=value" 字符串
+        # ---------------------------------------------------------
+
+        # 如果 page_cookies 是列表 (as_dict=False)，先转成字典便于处理
+        if isinstance(data.cookies, list):
+            cookie_dict = {item['name']: item['value'] for item in data.cookies}
+        else:
+            cookie_dict = data.cookies
+        cookie_string = "; ".join([f"{key}={value}" for key, value in cookie_dict.items()])
+
+        # ---------------------------------------------------------
+        # 2. 构造请求：
+        # ---------------------------------------------------------
+        headers = {
+            "xcookie": cookie_string,
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+
+        log(f"正在发送 Cookie 到服务器: {server_url}")
+        # 发送 POST 请求
+        response = requests.post(server_url, headers=headers, json=data.payload, timeout=10)
+        if response.status_code == 200:
+            res_json = response.json()
+            log("接口响应成功: " + str(res_json))
+        else:
+            log(f"接口报错，状态码: {response.status_code}, 内容: {response.text}")
+
+    except Exception as e:
+        log(f"发送请求时出错: {e}")
 
 
 def auto_login():
@@ -230,6 +270,74 @@ def auto_login():
     dialog_container = uk_input.parent('css:.el-dialog')
     # 含义：在当前节点(.)内部，找 class 包含 footer 的 div，下面包含文字的 button
     dialog_container.ele('xpath:.//div[contains(@class, "el-dialog__footer")]//button[contains(., "确 定")]').click()
+
+
+    remote_server_url = config.get('push_server_url')
+    # 1. 等待 URL 发生变化目前是出现dashboard (判断登录成功的关键)
+    try:
+        page.wait.url_change(text='dashboard', timeout=15)
+        # 等待页面加载完毕
+        page.wait.load_start()
+    except:
+        log("等待跳转超时，尝试直接获取 Cookie")
+
+    # 获取 cookie 列表对象
+    cookies_list = page.cookies()
+    # 转为字典格式: {'JSESSIONID': 'xxx', 'uid': 'xxx'}
+    cookies_dict = {item['name']: item['value'] for item in cookies_list}
+
+    data = SimpleNamespace()
+    data.cookies = cookies_dict
+    data.payload = {
+        "username": username
+    }
+
+    # --- 保活逻辑开始 ---
+    # 获取保活时长，默认为 2 小时
+    keep_alive_duration_hours = config.get('keep_alive_duration_hours', 2)
+    # 获取刷新间隔，默认为 10 分钟
+    keep_alive_interval_minutes = config.get('keep_alive_interval_minutes', 10)
+    start_time = datetime.now()
+    end_time = start_time + timedelta(hours=keep_alive_duration_hours)
+    log(f"浏览器将保持活跃至: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # 将刷新间隔转换为秒
+    sleep_seconds = keep_alive_interval_minutes * 60
+
+    try:
+        while datetime.now() < end_time:
+            log(f"正在进行保活刷新... 剩余时长: {(end_time - datetime.now()).total_seconds() / 60:.1f} 分钟")
+
+            # 执行页面刷新
+            page.refresh()
+            time.sleep(random.uniform(2, 5))  # 刷新后稍微等待，模拟加载
+
+            # 如果当前 URL 中不包含 'dashboard'，则认为已掉线
+            if 'dashboard' not in page.url:
+                log(f"检测到掉线(当前URL: {page.url})，提前结束保活。")
+                break
+
+            # 重新获取最新的 Cookie 并发送，因为有些网站会更新 Session ID
+            current_cookies_list = page.cookies()
+            current_cookies_dict = {item['name']: item['value'] for item in current_cookies_list}
+
+            # 更新 data 对象中的 cookie
+            data.cookies = current_cookies_dict
+
+            # 在循环内发送请求（现在这是第一次发送）
+            if current_cookies_dict and remote_server_url:
+                send_cookies_to_server(data, remote_server_url)
+
+            # 等待下一个刷新周期
+            time.sleep(sleep_seconds)
+
+    except Exception as e:
+        log(f"保活期间发生错误: {e}")
+
+    finally:
+        log(f"保活 {keep_alive_duration_hours} 小时已结束，或遇到错误/掉线。正在关闭浏览器。")
+        # 关闭浏览器
+        page.quit()
+
 if __name__ == '__main__':
     auto_login()
-
