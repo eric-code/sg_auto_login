@@ -1,0 +1,2 @@
+# 使用方法
+在exe文件同目录使用config_template.json的格式新建一个名为config.json的文件，双击exe文件即可执行
