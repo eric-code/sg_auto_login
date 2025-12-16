@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+venv/
+.venv/
+.env
+
+# PyInstaller (打包生成的文件不要传)
+*.spec
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+
+# Mac OS
+.DS_Store
+
+# Logs
+*.log
+run_log.txt
+
+# Config (如果配置文件包含敏感密码，建议忽略，只传一个 config_template.json)
+config.json
