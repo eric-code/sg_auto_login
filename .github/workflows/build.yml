@@ -2,19 +2,20 @@ name: Build Windows EXE
 
 on:
   push:
-    branches: [ "main" ]  # 当推送到 main 分支时触发
+    branches: [ "main" ]
 
 jobs:
   build:
-    runs-on: windows-latest  # 使用 Windows 环境
+    runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - name: Checkout code
+      uses: actions/checkout@v4  # 推荐升级到 v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5 # 推荐升级到 v5
       with:
-        python-version: "3.10" # 建议用 3.8 - 3.10，太高版本有时 ddddocr 兼容性不好
+        python-version: "3.10"
 
     - name: Install dependencies
       run: |
@@ -23,12 +24,14 @@ jobs:
         pip install -r requirements.txt
 
     - name: Build EXE
-      # 注意：这里加上了 --collect-all ddddocr 防止漏掉模型文件
       run: |
-        pyinstaller -F -n AutoLoginTool --collect-all ddddocr main.py
+        pyinstaller -F -n SGAutoLoginTool --collect-all ddddocr main.py
 
     - name: Upload Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4 # 必须：升级到 v4
       with:
         name: SGAutoLoginTool_Windows
+        # 注意：v4 版本不再支持通配符路径的自动扩展，路径必须准确
         path: dist/SGAutoLoginTool.exe
+        # 可选：设置保留天数，避免占用空间
+        retention-days: 5
