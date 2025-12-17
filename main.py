@@ -301,8 +301,12 @@ def auto_login():
     end_time = start_time + timedelta(hours=keep_alive_duration_hours)
     log(f"浏览器将保持活跃至: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # 将刷新间隔转换为秒
-    sleep_seconds = keep_alive_interval_minutes * 60
+    # 心跳间隔为设置间隔前后60秒之间
+    base_seconds = keep_alive_interval_minutes * 60
+    sleep_seconds = base_seconds + random.uniform(-60, 60)
+    if sleep_seconds < 0:
+        sleep_seconds = 0
+
 
     try:
         while datetime.now() < end_time:
