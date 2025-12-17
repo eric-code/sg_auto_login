@@ -69,7 +69,7 @@ def auto_login(config):
     btn.click()
 
     # 等待验证码弹窗出现
-    print("等待验证码加载...")
+    log("等待验证码加载...")
     # AJCaptcha 通常的包裹容器类名是 .verify-box 或类似的
     # 如果是点击后才弹出的，这里需要确保它已经显示
     time.sleep(3)

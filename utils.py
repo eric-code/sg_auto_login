@@ -1,6 +1,8 @@
 import ipaddress
 import os
+import random
 import sys
+import subprocess
 import json
 from datetime import datetime, timedelta
 from cryptography import x509
@@ -194,3 +196,68 @@ def get_human_tracks(distance):
         back_distance -= move
 
     return tracks + back_tracks
+
+
+def install_cert_to_windows(cert_path):
+    """
+    将证书安装到 Windows '当前用户' 的 '受信任的根证书颁发机构'
+    :param cert_path: 证书文件的绝对路径或相对路径
+    :return: bool 是否执行成功
+    """
+    # 获取绝对路径，防止命令行找不到文件
+    abs_cert_path = os.path.abspath(cert_path)
+
+    if not os.path.exists(abs_cert_path):
+        print(f"错误: 找不到证书文件: {abs_cert_path}")
+        return False
+
+    log(f"正在尝试安装证书: {abs_cert_path} ...")
+    log("注意: 系统将弹出一个安全警告窗口，请点击【是(Y)】以继续安装。")
+
+    try:
+        # 使用 Windows 自带的 certutil 工具
+        # -addstore: 添加证书
+        # -user: 安装到当前用户（不需要管理员权限，但会有弹窗）
+        # Root: 指定存储区为"受信任的根证书颁发机构"
+        command = ["certutil", "-addstore", "-user", "Root", abs_cert_path]
+
+        # 隐藏命令行窗口（可选，防止黑框一闪而过）
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        # 执行命令
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding='gbk',  # Windows 中文环境通常是 gbk
+            startupinfo=startupinfo
+        )
+
+        if result.returncode == 0:
+            log("证书安装命令执行成功（请确认你点击了弹窗的'是'）。")
+            return True
+        else:
+            log(f"安装失败: {result.stdout} {result.stderr}")
+            return False
+
+    except Exception as e:
+        log(f"发生异常: {e}")
+        return False
+
+
+def check_and_install_cert(cert_base_path):
+    cert_path = os.path.join(cert_base_path, "ca.crt")
+    flag_path = os.path.join(cert_base_path, "cert_installed.flag")
+
+    # 如果标记文件存在，假设用户已经安装过了
+    if os.path.exists(flag_path):
+        return
+
+    # 执行安装
+    success = install_cert_to_windows(cert_path)
+
+    # 如果安装命令成功（用户点没点'是'检测不到，只能假设他点了），写入标记
+    if success:
+        with open(flag_path, "w") as f:
+            f.write("installed")

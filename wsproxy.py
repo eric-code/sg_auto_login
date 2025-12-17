@@ -2,7 +2,8 @@ import asyncio
 import ssl
 import os
 import sys
-from utils import log, get_base_path, load_config, generate_self_signed_cert
+from utils import log, get_base_path, load_config, generate_self_signed_cert, check_and_install_cert
+
 
 def log_proxy(msg):
     # 简单的日志输出，为了不和主程序混淆，加个前缀
@@ -145,11 +146,14 @@ async def handle_client(client_reader, client_writer, target_ip, target_port, ta
 async def start_server_async(local_port, target_ip, target_port):
     base_path = get_base_path()
 
-    # 1. 准备证书 (直接调用 common 里的函数)
+    # 1. 准备证书
     cert_dir = os.path.join(base_path, 'certs')
     try:
-        # 这里会自动检查是否存在，不存在则生成
+        # 自动检查是否存在，不存在则生成
         ca_path, cert_path, key_path = generate_self_signed_cert(cert_dir)
+        # 检查是否安装过，没安装过就安装证书
+        check_and_install_cert(cert_dir)
+
     except Exception as e:
         log_proxy(f"证书获取失败: {e}")
         return
