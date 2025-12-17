@@ -1,9 +1,6 @@
 import time
 import base64
 import io
-import sys
-import os
-import json
 import requests
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -11,37 +8,9 @@ from PIL import Image
 from DrissionPage import ChromiumPage
 import ddddocr
 import random
-
-def get_base_path():
-    """
-    获取程序运行的基础路径：
-    1. 如果是打包后的 exe，返回 exe 所在目录
-    2. 如果是 py 脚本，返回脚本所在目录
-    """
-    if getattr(sys, 'frozen', False):
-        # 处于 exe 运行模式
-        return os.path.dirname(sys.executable)
-    else:
-        # 处于 py 脚本运行模式
-        return os.path.dirname(os.path.abspath(__file__))
-
-def log(content):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    msg = f"[{timestamp}] {content}"
-    print(msg)
-    with open('run_log.txt', 'a', encoding='utf-8') as f:
-        f.write(msg + "\n")
-
-def load_config():
-    # 拼接出 config.json 的绝对路径
-    config_path = os.path.join(get_base_path(), 'config.json')
-
-    if not os.path.exists(config_path):
-        log(f"错误：找不到配置文件 {config_path}")
-        return None
-
-    with open(config_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+import threading
+import wsproxy
+from common import log, load_config, get_base_path
 
 def get_human_tracks(distance):
     """
@@ -144,6 +113,13 @@ def send_cookies_to_server(data, server_url):
 
 
 def auto_login():
+    log("正在启动本地 Ukey 转发代理...")
+    proxy_thread = threading.Thread(target=wsproxy.run_proxy_server, daemon=True)
+    proxy_thread.start()
+
+    # 稍微等待一下让端口监听启动
+    time.sleep(2)
+
     # 1. 初始化浏览器
     page = ChromiumPage()
 
