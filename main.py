@@ -10,69 +10,7 @@ import ddddocr
 import random
 import threading
 import wsproxy
-from common import log, load_config, get_base_path
-
-def get_human_tracks(distance):
-    """
-    生成高速拟人轨迹
-    :param distance: 总距离
-    :return: 轨迹列表 [[dx, dy, sleep_time], ...]
-    """
-    tracks = []
-    current = 0
-    # 减速阈值：滑到 85% 的距离开始减速
-    mid = distance * 0.85
-    t = 0.2  # 时间计算单位
-    v = 0  # 初始速度
-
-    # 故意多滑一点 (过冲 3-8 px)
-    target = distance + random.randint(3, 8)
-
-    while current < target:
-        if current < mid:
-            # 提升加速度,不然会滑得很慢，让起步和中间段非常快
-            a = random.randint(7, 17)
-        else:
-            # 减速阶段，急速刹车
-            a = -random.randint(12, 23)
-
-        v0 = v
-        v = v0 + a * t
-        move = v0 * t + 0.5 * a * t * t
-
-        # 即使减速，最低也保持 2px 的移动，防止最后阶段太磨叽
-        if move < 2: move = 2
-
-        current += move
-
-        # 将 sleep 时间放入轨迹数据中
-        # 如果是加速阶段（中间），几乎不等待；如果是减速阶段（结尾），稍微带点延迟
-        if current < mid:
-            sleep_t = 0  # 高速段不睡觉
-        else:
-            sleep_t = random.uniform(0.001, 0.005)  # 结尾微小延迟
-
-        tracks.append([round(move), sleep_t])
-
-    # --- 回退修正 (回拉) ---
-    back_tracks = []
-    back_distance = current - distance
-
-    # 回退时步子也不要太小，防止磨蹭
-    while back_distance > 0:
-        if back_distance > 5:
-            move = random.randint(3, 5)  # 距离远就拉快点
-        else:
-            move = random.randint(1, 2)  # 距离近就微调
-
-        if back_distance < move:
-            move = back_distance
-
-        back_tracks.append([-move, random.uniform(0.01, 0.02)])
-        back_distance -= move
-
-    return tracks + back_tracks
-
+from utils import log, load_config, get_human_tracks
 
 def send_cookies_to_server(data, server_url):
     """
@@ -111,24 +49,14 @@ def send_cookies_to_server(data, server_url):
     except Exception as e:
         log(f"发送请求时出错: {e}")
 
-
-def auto_login():
-    log("正在启动本地 Ukey 转发代理...")
-    proxy_thread = threading.Thread(target=wsproxy.run_proxy_server, daemon=True)
-    proxy_thread.start()
-
-    # 稍微等待一下让端口监听启动
-    time.sleep(2)
-
-    # 1. 初始化浏览器
-    page = ChromiumPage()
-
-    config = load_config()
+def auto_login(config):
     target_url = config['url']
     username = config['username']
     password = config['password']
     ukey_pin = config['ukey_pin']
 
+    # 1. 初始化浏览器
+    page = ChromiumPage()
     page.get(target_url)
 
     # --- 模拟登录操作  ---
@@ -277,7 +205,7 @@ def auto_login():
     end_time = start_time + timedelta(hours=keep_alive_duration_hours)
     log(f"浏览器将保持活跃至: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # 心跳间隔为设置间隔前后60秒之间
+    # 心跳间隔为设置间隔前后60秒之间将刷新间隔转换为秒
     base_seconds = keep_alive_interval_minutes * 60
     sleep_seconds = base_seconds + random.uniform(-60, 60)
     if sleep_seconds < 0:
@@ -320,4 +248,20 @@ def auto_login():
         page.quit()
 
 if __name__ == '__main__':
-    auto_login()
+    current_config = load_config()
+    if current_config:
+        if current_config.get('enable_local_proxy', False):
+            log("配置为开启：正在启动本地 Ukey 转发代理...")
+            proxy_thread = threading.Thread(target=wsproxy.run_proxy_server, daemon=True)
+            proxy_thread.start()
+            # 稍微等待一下让端口监听启动
+            time.sleep(2)
+        else:
+            log("配置为关闭：跳过启动本地 Ukey 转发代理")
+
+        try:
+            auto_login(current_config)
+        except Exception as e:
+            log(f"程序运行出错: {e}")
+    else:
+        log("配置文件读取失败，无法启动。")

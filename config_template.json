@@ -2,5 +2,11 @@
   "url": "https://pmos.sgcc.com.cn/#/outNet",
   "username": "username",
   "password": "password",
-  "ukey_pin": "ukey_pin"
+  "ukey_pin": "ukey_pin",
+  "push_server_url": "push_server_url",
+  "keep_alive_duration_hours": 1,
+  "keep_alive_interval_minutes": 5,
+  "enable_local_proxy": true,
+  "ukey_proxy_target_ip": "ukey_proxy_target_ip",
+  "ukey_proxy_target_port": 11111
 }

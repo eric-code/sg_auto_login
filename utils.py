@@ -4,7 +4,7 @@ import sys
 import json
 from datetime import datetime, timedelta
 from cryptography import x509
-from cryptography.hazmat._oid import NameOID
+from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
@@ -133,3 +133,64 @@ def generate_self_signed_cert(cert_dir="certs"):
     log(f"安装位置: 受信任的根证书颁发机构")
 
     return ca_cert_path, server_cert_path, server_key_path
+
+def get_human_tracks(distance):
+    """
+    生成高速拟人轨迹
+    :param distance: 总距离
+    :return: 轨迹列表 [[dx, dy, sleep_time], ...]
+    """
+    tracks = []
+    current = 0
+    # 减速阈值：滑到 85% 的距离开始减速
+    mid = distance * 0.85
+    t = 0.2  # 时间计算单位
+    v = 0  # 初始速度
+
+    # 故意多滑一点 (过冲 3-8 px)
+    target = distance + random.randint(3, 8)
+
+    while current < target:
+        if current < mid:
+            # 提升加速度,不然会滑得很慢，让起步和中间段非常快
+            a = random.randint(7, 17)
+        else:
+            # 减速阶段，急速刹车
+            a = -random.randint(12, 23)
+
+        v0 = v
+        v = v0 + a * t
+        move = v0 * t + 0.5 * a * t * t
+
+        # 即使减速，最低也保持 2px 的移动，防止最后阶段太磨叽
+        if move < 2: move = 2
+
+        current += move
+
+        # 将 sleep 时间放入轨迹数据中
+        # 如果是加速阶段（中间），几乎不等待；如果是减速阶段（结尾），稍微带点延迟
+        if current < mid:
+            sleep_t = 0  # 高速段不睡觉
+        else:
+            sleep_t = random.uniform(0.001, 0.005)  # 结尾微小延迟
+
+        tracks.append([round(move), sleep_t])
+
+    # --- 回退修正 (回拉) ---
+    back_tracks = []
+    back_distance = current - distance
+
+    # 回退时步子也不要太小，防止磨蹭
+    while back_distance > 0:
+        if back_distance > 5:
+            move = random.randint(3, 5)  # 距离远就拉快点
+        else:
+            move = random.randint(1, 2)  # 距离近就微调
+
+        if back_distance < move:
+            move = back_distance
+
+        back_tracks.append([-move, random.uniform(0.01, 0.02)])
+        back_distance -= move
+
+    return tracks + back_tracks

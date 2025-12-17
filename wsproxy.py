@@ -2,7 +2,7 @@ import asyncio
 import ssl
 import os
 import sys
-from common import log, get_base_path, load_config, generate_self_signed_cert
+from utils import log, get_base_path, load_config, generate_self_signed_cert
 
 def log_proxy(msg):
     # 简单的日志输出，为了不和主程序混淆，加个前缀
