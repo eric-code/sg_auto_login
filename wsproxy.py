@@ -186,9 +186,10 @@ def run_proxy_server():
 
     target_ip = config.get('ukey_proxy_target_ip')
     target_port = config.get('ukey_proxy_target_port')
+    local_port = target_port
 
     if not target_ip or not target_port:
-        print("未配置 ukey_proxy_target_ip 或 ukey_proxy_target_port，跳过代理启动")
+        log_proxy("未配置 ukey_proxy_target_ip 或 ukey_proxy_target_port，跳过代理启动")
         return
 
     # 启动 asyncio循环
@@ -197,14 +198,14 @@ def run_proxy_server():
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     try:
-        asyncio.run(start_server_async(21061, target_ip, target_port))
+        asyncio.run(start_server_async(local_port, target_ip, target_port))
     except KeyboardInterrupt:
         pass
     except OSError as e:
         if "Address already in use" in str(e):
-            print("端口 21061 已被占用，可能是 Ukey 助手已在本地运行，代理不启动。")
+            log_proxy(f"端口 {local_port} 已被占用，可能是 Ukey 助手已在本地运行，代理不启动。")
         else:
-            print(f"代理启动失败: {e}")
+            log_proxy(f"代理启动失败: {e}")
 
 
 if __name__ == '__main__':
