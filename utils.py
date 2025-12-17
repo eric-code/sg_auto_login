@@ -24,7 +24,6 @@ def log(content):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     msg = f"[{timestamp}] {content}"
     print(msg)
-    # 这里的 run_log.txt 路径也建议用 get_base_path 拼接，防止路径错乱
     log_path = os.path.join(get_base_path(), 'run_log.txt')
     with open(log_path, 'a', encoding='utf-8') as f:
         f.write(msg + "\n")
@@ -131,7 +130,7 @@ def generate_self_signed_cert(cert_dir="certs"):
         f.write(server_cert.public_bytes(serialization.Encoding.PEM))
 
     log(f"证书生成完毕。")
-    log(f"请务必在机器A上安装生成的 CA 证书: {os.path.abspath(ca_cert_path)}")
+    log(f"请务必在机器上安装生成的 CA 证书: {os.path.abspath(ca_cert_path)}")
     log(f"安装位置: 受信任的根证书颁发机构")
 
     return ca_cert_path, server_cert_path, server_key_path
@@ -221,7 +220,7 @@ def install_cert_to_windows(cert_path):
         # Root: 指定存储区为"受信任的根证书颁发机构"
         command = ["certutil", "-addstore", "-user", "Root", abs_cert_path]
 
-        # 隐藏命令行窗口（可选，防止黑框一闪而过）
+        # 隐藏上面的命令行窗口（可选，防止黑框一闪而过）
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
@@ -253,8 +252,6 @@ def check_and_install_cert(cert_base_path):
     # 如果标记文件存在，假设用户已经安装过了
     if os.path.exists(flag_path):
         return
-
-    # 执行安装
     success = install_cert_to_windows(cert_path)
 
     # 如果安装命令成功（用户点没点'是'检测不到，只能假设他点了），写入标记

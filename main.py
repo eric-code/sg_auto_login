@@ -70,12 +70,11 @@ def auto_login(config):
 
     # 等待验证码弹窗出现
     log("等待验证码加载...")
-    # AJCaptcha 通常的包裹容器类名是 .verify-box 或类似的
-    # 如果是点击后才弹出的，这里需要确保它已经显示
     time.sleep(3)
 
     # --- 2. 获取验证码图片 ---
     # AJCaptcha 标准结构中：
+    # 通常的包裹容器类名是 .verify-box 或类似的
     # 背景图类名通常包含 verify-img-out 或 verify-img-panel
     # 滑块图类名通常包含 verify-sub-block
 
@@ -98,7 +97,7 @@ def auto_login(config):
         log("未找到验证码元素，请检查选择器")
         return
 
-    # 获取图片的 src 属性 (通常是 data:image/png;base64,...)
+    # 获取图片的 src 属性
     bg_src = bg_ele.attr('src')
     block_src = block_ele.attr('src')
 
@@ -140,8 +139,7 @@ def auto_login(config):
 
     log(f"最终计划滑动距离: {final_distance}")
 
-    # --- 5. 执行滑动 ---
-    # --- 执行拟人滑动 ---
+    # --- 5. 执行拟人滑动 ---
     # 生成优化后的轨迹
     track_list = get_human_tracks(final_distance)
     log(f"轨迹点数量: {len(track_list)} (步数越少越快)")
@@ -177,7 +175,7 @@ def auto_login(config):
 
 
     remote_server_url = config.get('push_server_url')
-    # 1. 等待 URL 发生变化目前是出现dashboard (判断登录成功的关键)
+    #等待 URL 发生变化目前是出现dashboard (判断登录成功的关键)
     try:
         page.wait.url_change(text='dashboard', timeout=15)
         # 等待页面加载完毕
@@ -210,7 +208,6 @@ def auto_login(config):
     sleep_seconds = base_seconds + random.uniform(-60, 60)
     if sleep_seconds < 0:
         sleep_seconds = 0
-
 
     try:
         while datetime.now() < end_time:

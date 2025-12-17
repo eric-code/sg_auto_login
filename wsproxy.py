@@ -180,9 +180,6 @@ async def start_server_async(local_port, target_ip, target_port):
 
 
 def run_proxy_server():
-    """
-    入口函数，供主程序调用
-    """
     # 读取配置
     config = load_config()
     if not config:
@@ -207,7 +204,7 @@ def run_proxy_server():
         pass
     except OSError as e:
         if "Address already in use" in str(e):
-            log_proxy(f"端口 {local_port} 已被占用，可能是 Ukey 助手已在本地运行，代理不启动。")
+            log_proxy(f"端口 {local_port} 已被占用，可能是 Ukey 助手已在本地运行或有僵尸进程，代理不启动。")
         else:
             log_proxy(f"代理启动失败: {e}")
 
