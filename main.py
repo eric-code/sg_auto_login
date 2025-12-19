@@ -10,7 +10,178 @@ import ddddocr
 import random
 import threading
 import wsproxy
+from mqtt_handler import MqttCodeListener
 from utils import log, load_config, get_human_tracks
+
+
+def solve_slider(page):
+    log("开始处理滑动验证码...")
+    try:
+        # 1. 定位元素
+        bg_ele = page.ele('css:.verify-img-out img', timeout=5)
+        block_ele = page.ele('css:.verify-sub-block img', timeout=5)
+        slider_btn = page.ele('css:.verify-move-block', timeout=5)
+
+        if not bg_ele or not block_ele:
+            log("未找到验证码图片元素")
+            return False
+
+        # 2. 处理图片数据
+        def get_bytes(src):
+            if ',' in src: src = src.split(',')[1]
+            return base64.b64decode(src)
+
+        bg_bytes = get_bytes(bg_ele.attr('src'))
+        block_bytes = get_bytes(block_ele.attr('src'))
+
+        # 3. 识别缺口
+        ocr = ddddocr.DdddOcr(det=False, ocr=False, show_ad=False)
+        res = ocr.slide_match(target_bytes=block_bytes, background_bytes=bg_bytes, simple_target=True)
+        target_x = res['target'][0]
+
+        # 4. 计算比例与距离
+        render_width = bg_ele.rect.size[0]
+        real_width = Image.open(io.BytesIO(bg_bytes)).size[0]
+        scale_ratio = render_width / real_width
+        final_distance = (target_x * scale_ratio) - 2
+        log(f"识别 X: {target_x}, 缩放比: {scale_ratio:.2f}, 最终距离: {final_distance}")
+
+        # 5. 执行模拟滑动
+        track_list = get_human_tracks(final_distance)
+        page.actions.hold(slider_btn)
+        for track in track_list:
+            page.actions.move(offset_x=track[0], offset_y=random.choice([0, 0, -1, 1]), duration=0)
+            if track[1] > 0: time.sleep(track[1])
+
+        time.sleep(random.uniform(0.2, 0.4))
+        page.actions.release()
+        return True
+    except Exception as e:
+        log(f"滑动验证码处理异常: {e}")
+        return False
+
+
+def init_browser_and_login(config):
+    """步骤 1-5：初始化并完成初步登录及验证码"""
+    page = ChromiumPage()
+    page.get(config['url'])
+
+    log("输入账号密码...")
+    time.sleep(2)
+    page.ele('css:input.el-input__inner[placeholder="请输入账号"]').input(config['username'])
+    time.sleep(1)
+    page.ele('css:input.el-input__inner[placeholder="请输入密码"]').input(config['password'])
+    time.sleep(1)
+    page.ele('css:button.login-elbutton').click()
+
+    # 等待验证码出现并处理
+    time.sleep(3)
+    if page.ele('css:.verify-img-out'):
+        success = solve_slider(page)
+        if not success:
+            log("滑动验证失败")
+            return None
+
+    time.sleep(2)
+    return page
+
+
+def handle_verification(page, config, mqtt_listener):
+    """步骤 6：根据模式进行二次验证"""
+    mode = config.get('verification_mode', 'ukey')
+    log(f"当前验证模式: {mode}")
+
+    if mode == 'ukey':
+        # 点击证书验证tab下的验证按钮
+        uk_verify_btn = page.ele('css:.ukey_div button')
+        uk_verify_btn.click()
+        time.sleep(2)
+
+        # 输入 PIN
+        uk_input = page.ele('css:input.el-input__inner[placeholder="请输入Ukey口令"]')
+        uk_input.input(config['ukey_pin'])
+
+        # 点击确定
+        dialog_container = uk_input.parent('css:.el-dialog')
+        dialog_container.ele(
+            'xpath:.//div[contains(@class, "el-dialog__footer")]//button[contains(., "确 定")]').click()
+        log("Ukey 验证表单已提交")
+
+    elif mode == 'sms':
+        # 切换到短信验证tab
+        page.ele('#tab-SMS').click()
+        time.sleep(1)
+        page.ele('xpath://button//span[contains(text(), "获取验证码")]').click()
+
+        # 阻塞等待验证码到达
+        code = mqtt_listener.get_code(timeout=60)
+        if code:
+            log(f"从 MQTT 拿到验证码: {code}，正在输入...")
+            # 找到验证码输入框并输入
+            input_ele = page.ele('css:input.el-input__inner[placeholder="短信验证码"]')
+            input_ele.input(code)
+            time.sleep(1)
+            # 点击登录或确认
+            page.ele('xpath://button//span[contains(text(), "验 证")]').click()
+        else:
+            log("超时未获取到 MQTT 验证码")
+
+    else:
+        log("无需额外验证或未知模式")
+
+
+def process_cookies_and_keep_alive(page, config):
+    """步骤 7：获取 Cookie 并进行保活"""
+    remote_server_url = config.get('push_server_url')
+
+    # 1. 等待登录成功跳转
+    try:
+        log("等待跳转到 dashboard...")
+        page.wait.url_change(text='dashboard', timeout=15)
+        page.wait.load_start()
+    except:
+        log("等待跳转超时，尝试获取当前状态")
+
+    # 2. 初始 Cookie 获取与发送
+    def get_and_push_cookies():
+        cookies_list = page.cookies()
+        cookies_dict = {item['name']: item['value'] for item in cookies_list}
+        if cookies_dict and remote_server_url:
+            data = SimpleNamespace(cookies=cookies_dict, payload={"username": config['username']})
+            send_cookies_to_server(data, remote_server_url)
+        return cookies_dict
+
+    get_and_push_cookies()
+
+    # 3. 保活循环
+    keep_alive_h = config.get('keep_alive_duration_hours', 2)
+    interval_m = config.get('keep_alive_interval_minutes', 10)
+    end_time = datetime.now() + timedelta(hours=keep_alive_h)
+    log(f"开始保活，预计结束时间: {end_time.strftime('%H:%M:%S')}")
+
+    try:
+        while datetime.now() < end_time:
+            # 计算下次刷新等待时间（带抖动）
+            sleep_sec = (interval_m * 60) + random.uniform(-60, 60)
+            log(f"等待 {sleep_sec:.1f} 秒后进行下次刷新...")
+            time.sleep(max(sleep_sec, 5))
+
+            log("执行页面刷新保活...")
+            page.refresh()
+            time.sleep(random.uniform(2, 5))
+
+            if 'dashboard' not in page.url:
+                log(f"检测到已掉线 (URL: {page.url})")
+                break
+
+            # 刷新后更新并重新发送 Cookie
+            get_and_push_cookies()
+
+    except Exception as e:
+        log(f"保活异常: {e}")
+    finally:
+        log("保活结束，关闭浏览器")
+        page.quit()
 
 def send_cookies_to_server(data, server_url):
     """
@@ -49,216 +220,55 @@ def send_cookies_to_server(data, server_url):
     except Exception as e:
         log(f"发送请求时出错: {e}")
 
-def auto_login(config):
-    target_url = config['url']
-    username = config['username']
-    password = config['password']
-    ukey_pin = config['ukey_pin']
-
-    # 1. 初始化浏览器
-    page = ChromiumPage()
-    page.get(target_url)
-
-    # --- 模拟登录操作  ---
-    time.sleep(2)
-    page.ele('css:input.el-input__inner[placeholder="请输入账号"]').input(username)
-    time.sleep(2)
-    page.ele('css:input.el-input__inner[placeholder="请输入密码"]').input(password)
-    time.sleep(1)
-    btn = page.ele('css:button.login-elbutton')
-    btn.click()
-
-    # 等待验证码弹窗出现
-    log("等待验证码加载...")
-    time.sleep(3)
-
-    # --- 2. 获取验证码图片 ---
-    # AJCaptcha 标准结构中：
-    # 通常的包裹容器类名是 .verify-box 或类似的
-    # 背景图类名通常包含 verify-img-out 或 verify-img-panel
-    # 滑块图类名通常包含 verify-sub-block
-
+def auto_login(config, mqtt_listener=None):
     try:
-        # 获取背景图片元素
-        bg_ele = page.ele('css:.verify-img-out img')
-        # 获取滑块图片元素
-        # 注意：AJCaptcha 有时候滑块是单独的img，有时候是canvas，这里假设是img或div带背景
-        # 如果是 canvas，获取方式会略有不同
-        block_ele = page.ele('css:.verify-sub-block img')
+        page = init_browser_and_login(config)
+        if not page: return
 
-        # 如果找不到，打印一下页面源码排查
-        if not bg_ele or not block_ele:
-            log("未找到图片元素，可能是加载延迟或选择器错误")
-            return
+        handle_verification(page, config, mqtt_listener)
 
-        # 获取滑块按钮（用于拖拽的那个按钮）
-        slider_btn = page.ele('css:.verify-move-block')
-    except:
-        log("未找到验证码元素，请检查选择器")
-        return
-
-    # 获取图片的 src 属性
-    bg_src = bg_ele.attr('src')
-    block_src = block_ele.attr('src')
-
-    # 处理 Base64 数据
-    def save_base64_image(data_str):
-        # 去掉 'data:image/png;base64,' 前缀
-        if ',' in data_str:
-            data_str = data_str.split(',')[1]
-        return base64.b64decode(data_str)
-
-    bg_bytes = save_base64_image(bg_src)
-    block_bytes = save_base64_image(block_src)
-
-    # --- 3. 识别缺口位置 ---
-    ocr = ddddocr.DdddOcr(det=False, ocr=False, show_ad=False)
-
-    # slide_match 返回结构: {'target': [x, y, w, h], 'bg': [w, h]}
-    res = ocr.slide_match(target_bytes=block_bytes, background_bytes=bg_bytes, simple_target=True)
-
-    target_x = res['target'][0]
-    log(f"识别到的缺口原始坐标 X: {target_x}")
-
-    # --- 4. 处理缩放比例 (关键步骤) ---
-    # 网页上图片显示的宽度
-    render_width = bg_ele.rect.size[0]
-    # 实际图片的宽度 (ddddocr 告诉我们的，或者用 PIL 读取)
-    img = Image.open(io.BytesIO(bg_bytes))
-    real_width = img.size[0]  # img.size 返回 (width, height)
-
-    scale_ratio = render_width / real_width
-    log(f"网页渲染宽度: {render_width}, 图片原始宽度: {real_width}, 缩放比例: {scale_ratio}")
-
-    # 计算实际需要滑动的距离
-    final_distance = target_x * scale_ratio
-
-    # 修正：AJcaptcha 有时候滑块初始位置不在 0，或者有边框偏移
-    # 这里的 5 是经验值，可能需要根据具体网站微调（例如减去滑块的一半宽度等，AJ通常不需要）
-    final_distance = final_distance - 2
-
-    log(f"最终计划滑动距离: {final_distance}")
-
-    # --- 5. 执行拟人滑动 ---
-    # 生成优化后的轨迹
-    track_list = get_human_tracks(final_distance)
-    log(f"轨迹点数量: {len(track_list)} (步数越少越快)")
-    page.actions.hold(slider_btn)
-    # 开始移动
-    for track in track_list:
-        dx = track[0]  # X轴移动距离
-        sleep_t = track[1]  # 等待时间
-        # Y轴微小抖动：大部分时候不动(0)，偶尔抖一下
-        dy = random.choice([0, 0, -1, 1])
-        # duration=0 表示 DrissionPage 内部不等待，全速发送指令
-        page.actions.move(offset_x=dx, offset_y=dy, duration=0)
-        # 只有在需要的时候才 sleep (主要是结尾阶段)
-        if sleep_t > 0:
-            time.sleep(sleep_t)
-    # 模拟松手前的最后确认（这个时间不能省，防风控关键）
-    time.sleep(random.uniform(0.2, 0.4))
-    page.actions.release()
-
-    time.sleep(2)
-
-    # --- 6. 点击证书验证tab下的验证按钮 ---
-    uk_verify_btn = page.ele('css:.ukey_div button')
-    uk_verify_btn.click()
-    time.sleep(2)
-
-    uk_input = page.ele('css:input.el-input__inner[placeholder="请输入Ukey口令"]')
-    uk_input.input(ukey_pin)
-
-    dialog_container = uk_input.parent('css:.el-dialog')
-    # 含义：在当前节点(.)内部，找 class 包含 footer 的 div，下面包含文字的 button
-    dialog_container.ele('xpath:.//div[contains(@class, "el-dialog__footer")]//button[contains(., "确 定")]').click()
-
-
-    remote_server_url = config.get('push_server_url')
-    #等待 URL 发生变化目前是出现dashboard (判断登录成功的关键)
-    try:
-        page.wait.url_change(text='dashboard', timeout=15)
-        # 等待页面加载完毕
-        page.wait.load_start()
-    except:
-        log("等待跳转超时，尝试直接获取 Cookie")
-
-    # 获取 cookie 列表对象
-    cookies_list = page.cookies()
-    # 转为字典格式: {'JSESSIONID': 'xxx', 'uid': 'xxx'}
-    cookies_dict = {item['name']: item['value'] for item in cookies_list}
-
-    data = SimpleNamespace()
-    data.cookies = cookies_dict
-    data.payload = {
-        "username": username
-    }
-
-    # --- 保活逻辑开始 ---
-    # 获取保活时长，默认为 2 小时
-    keep_alive_duration_hours = config.get('keep_alive_duration_hours', 2)
-    # 获取刷新间隔，默认为 10 分钟
-    keep_alive_interval_minutes = config.get('keep_alive_interval_minutes', 10)
-    start_time = datetime.now()
-    end_time = start_time + timedelta(hours=keep_alive_duration_hours)
-    log(f"浏览器将保持活跃至: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-    # 心跳间隔为设置间隔前后60秒之间将刷新间隔转换为秒
-    base_seconds = keep_alive_interval_minutes * 60
-    sleep_seconds = base_seconds + random.uniform(-60, 60)
-    if sleep_seconds < 0:
-        sleep_seconds = 0
-
-    try:
-        while datetime.now() < end_time:
-            log(f"正在进行保活刷新... 剩余时长: {(end_time - datetime.now()).total_seconds() / 60:.1f} 分钟")
-
-            # 执行页面刷新
-            page.refresh()
-            time.sleep(random.uniform(2, 5))  # 刷新后稍微等待，模拟加载
-
-            # 如果当前 URL 中不包含 'dashboard'，则认为已掉线
-            if 'dashboard' not in page.url:
-                log(f"检测到掉线(当前URL: {page.url})，提前结束保活。")
-                break
-
-            # 重新获取最新的 Cookie 并发送，因为有些网站会更新 Session ID
-            current_cookies_list = page.cookies()
-            current_cookies_dict = {item['name']: item['value'] for item in current_cookies_list}
-
-            # 更新 data 对象中的 cookie
-            data.cookies = current_cookies_dict
-
-            # 在循环内发送请求（现在这是第一次发送）
-            if current_cookies_dict and remote_server_url:
-                send_cookies_to_server(data, remote_server_url)
-
-            # 等待下一个刷新周期
-            time.sleep(sleep_seconds)
-
+        process_cookies_and_keep_alive(page, config)
     except Exception as e:
-        log(f"保活期间发生错误: {e}")
+        log(f"流程执行异常: {e}")
 
-    finally:
-        log(f"保活 {keep_alive_duration_hours} 小时已结束，或遇到错误/掉线。正在关闭浏览器。")
-        # 关闭浏览器
-        page.quit()
 
 if __name__ == '__main__':
     current_config = load_config()
     if current_config:
-        if current_config.get('enable_local_proxy', False):
-            log("配置为开启：正在启动本地 Ukey 转发代理...")
-            proxy_thread = threading.Thread(target=wsproxy.run_proxy_server, daemon=True)
-            proxy_thread.start()
-            # 稍微等待一下让端口监听启动
-            time.sleep(2)
-        else:
-            log("配置为关闭：跳过启动本地 Ukey 转发代理")
-
-        try:
-            auto_login(current_config)
-        except Exception as e:
-            log(f"程序运行出错: {e}")
+        default_settings = {
+            'mqtt_username': 'sgsms',
+            'mqtt_password': '4$90*xyP$nqNocP',
+            'mqtt_topic': 'sms/verification',
+            'mqtt_host': '58.220.240.50',
+            'mqtt_port': 17181,
+            'mqtt_qos':2
+        }
+        current_config = {**default_settings, **current_config}
     else:
-        log("配置文件读取失败，无法启动。")
+        log("配置读取失败")
+        exit()
+
+    mqtt_service = None
+    if current_config.get('verification_mode') == 'sms':
+        log("正在启动 MQTT 验证码监听服务...")
+        mqtt_service = MqttCodeListener(current_config)
+        mqtt_service.start()
+
+    if current_config.get('enable_local_proxy', False):
+        log("配置为开启：正在启动本地 Ukey 转发代理...")
+        proxy_thread = threading.Thread(target=wsproxy.run_proxy_server, daemon=True)
+        proxy_thread.start()
+        # 稍微等待一下让端口监听启动
+        time.sleep(1)
+    else:
+        log("配置为关闭：跳过启动本地 Ukey 转发代理")
+
+    try:
+        auto_login(current_config, mqtt_listener=mqtt_service)
+    except Exception as e:
+        log(f"程序运行出错: {e}")
+    finally:
+        # 释放资源
+        if mqtt_service:
+            mqtt_service.stop()
+            log("MQTT 服务已关闭")

@@ -252,9 +252,26 @@ def check_and_install_cert(cert_base_path):
     # 如果标记文件存在，假设用户已经安装过了
     if os.path.exists(flag_path):
         return
-    success = install_cert_to_windows(cert_path)
 
-    # 如果安装命令成功（用户点没点'是'检测不到，只能假设他点了），写入标记
-    if success:
-        with open(flag_path, "w") as f:
-            f.write("installed")
+    # --- 平台差异化处理 ---
+    if sys.platform == "win32":
+        # Windows 平台执行现有安装逻辑
+        success = install_cert_to_windows(cert_path)
+        if success:
+            with open(flag_path, "w") as f:
+                f.write("installed")
+
+    elif sys.platform == "darwin":
+        # TODO: 实现 macOS 自动安装证书逻辑
+        # 参考命令: sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain <cert_path>
+        log("检测到 macOS 系统：[TODO] 自动安装证书功能待实现。请手动将 ca.crt 添加到系统的 Keychain 并设为始终信任。")
+
+    elif sys.platform.startswith("linux"):
+        # TODO: 实现 Linux 自动安装证书逻辑
+        # 参考路径:
+        # Ubuntu/Debian: /usr/local/share/ca-certificates/ 然后执行 update-ca-certificates
+        # CentOS/Fedora: /etc/pki/ca-trust/source/anchors/ 然后执行 update-ca-trust
+        log("检测到 Linux 系统：[TODO] 自动安装证书功能待实现。请根据发行版手动信任 ca.crt。")
+
+    else:
+        log(f"未知平台 {sys.platform}：请手动安装证书 {cert_path}")

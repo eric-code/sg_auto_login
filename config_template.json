@@ -8,5 +8,6 @@
   "keep_alive_interval_minutes": 5,
   "enable_local_proxy": true,
   "ukey_proxy_target_ip": "ukey_proxy_target_ip",
-  "ukey_proxy_target_port": 11111
+  "ukey_proxy_target_port": 11111,
+  "verification_mode": "sms|ukey"
 }
