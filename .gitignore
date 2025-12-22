@@ -23,4 +23,4 @@ build/
 run_log.txt
 
 # Config (如果配置文件包含敏感密码，建议忽略，只传一个 config_template.json)
-config.json
+config_ukey.json

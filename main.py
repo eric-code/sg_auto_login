@@ -43,7 +43,7 @@ def solve_slider(page):
         render_width = bg_ele.rect.size[0]
         real_width = Image.open(io.BytesIO(bg_bytes)).size[0]
         scale_ratio = render_width / real_width
-        final_distance = (target_x * scale_ratio) - 2
+        final_distance = (target_x * scale_ratio) - 1
         log(f"识别 X: {target_x}, 缩放比: {scale_ratio:.2f}, 最终距离: {final_distance}")
 
         # 5. 执行模拟滑动
@@ -55,41 +55,74 @@ def solve_slider(page):
 
         time.sleep(random.uniform(0.2, 0.4))
         page.actions.release()
-        return True
+
+        target_selector = 'css:.loginselect-dialog > .el-dialog__wrapper'
+
+        # 使用 wait.ele_displayed 等待元素变得可见
+        # timeout 设为 3-6 秒比较合适，因为滑动成功后后端返回结果需要一点时间
+        is_success = page.wait.ele_displayed(target_selector, timeout=6)
+
+        if is_success:
+            log("滑动校验成功：角色选择对话框已显示。")
+            return True
+        else:
+            log("滑动校验失败：角色选择对话框未出现，可能是滑动位置不准。")
+
+            # 失败后通常验证码会自动刷新，如果没有刷新，手动点一下刷新按钮
+            try:
+                refresh_btn = page.ele('css:.verify-refresh', timeout=1)
+                if refresh_btn:
+                    log("点击刷新验证码，准备重试...")
+                    refresh_btn.click()
+                    time.sleep(1)
+            except:
+                pass
+
+            return False
+
     except Exception as e:
         log(f"滑动验证码处理异常: {e}")
         return False
 
 
 def init_browser_and_login(config):
-    """步骤 1-5：初始化并完成初步登录及验证码"""
+    # 初始化并完成初步登录及滑块验证码
     page = ChromiumPage()
     page.get(config['url'])
 
     log("输入账号密码...")
     time.sleep(2)
-    page.ele('css:input.el-input__inner[placeholder="请输入账号"]').input(config['username'])
+    page.ele('css:input.el-input__inner[placeholder="请输入账号"]').input(config['username'], by_js=False)
     time.sleep(1)
-    page.ele('css:input.el-input__inner[placeholder="请输入密码"]').input(config['password'])
+    page.ele('css:input.el-input__inner[placeholder="请输入密码"]').input(config['password'], by_js=False)
     time.sleep(1)
     page.ele('css:button.login-elbutton').click()
 
-    # 等待验证码出现并处理
-    time.sleep(3)
-    if page.ele('css:.verify-img-out'):
-        success = solve_slider(page)
-        if not success:
-            log("滑动验证失败")
-            return None
+    max_retries = 10
+    for i in range(max_retries):
+        time.sleep(2)
+        if page.ele('css:.verify-img-out'):
+            log(f"检测到验证码，第 {i+1} 次尝试...")
+            if solve_slider(page):
+                break # 成功则跳出循环
+            else:
+                if i == max_retries - 1:
+                    log("多次滑动验证失败，放弃")
+                    page.quit()
+                    return None
+                continue
+        else:
+            log("未检测到验证码，可能已直接进入下一步")
+            break
 
-    time.sleep(2)
     return page
 
 
 def handle_verification(page, config, mqtt_listener):
-    """步骤 6：根据模式进行二次验证"""
     mode = config.get('verification_mode', 'ukey')
     log(f"当前验证模式: {mode}")
+    sms_tab = page.ele('#tab-SMS')
+    ukey_tab = page.ele('#tab-USB_KEY')
 
     if mode == 'ukey':
         # 点击证书验证tab下的验证按钮
@@ -108,27 +141,99 @@ def handle_verification(page, config, mqtt_listener):
         log("Ukey 验证表单已提交")
 
     elif mode == 'sms':
-        # 切换到短信验证tab
-        page.ele('#tab-SMS').click()
+        sms_tab.click()
         time.sleep(1)
-        page.ele('xpath://button//span[contains(text(), "获取验证码")]').click()
 
-        # 阻塞等待验证码到达
-        code = mqtt_listener.get_code(timeout=60)
-        if code:
-            log(f"从 MQTT 拿到验证码: {code}，正在输入...")
-            # 找到验证码输入框并输入
-            input_ele = page.ele('css:input.el-input__inner[placeholder="短信验证码"]')
-            input_ele.input(code)
-            time.sleep(1)
-            # 点击登录或确认
-            page.ele('xpath://button//span[contains(text(), "验 证")]').click()
-        else:
-            log("超时未获取到 MQTT 验证码")
+        sms_success = False
+        max_sms_attempts = 3
+
+        for attempt in range(max_sms_attempts):
+            log(f"--- 短信验证尝试 第 {attempt + 1} 次 ---")
+            mqtt_listener.clear_code()
+            send_code_btn = page.ele(
+                'xpath://button[.//span[contains(text(), "获取验证码") or contains(text(), "重新获取") or contains(text(), "s")]]')
+            if not send_code_btn:
+                log("未找到获取验证码按钮")
+                # 找不到来回切换下tab
+                ukey_tab.click()
+                time.sleep(0.5)
+                sms_tab.click()
+                time.sleep(3)
+                continue
+
+            # 如果按钮还处于禁用状态（例如倒计时还没跑完），则等待
+            if 'is-disabled' in send_code_btn.attr('class'):
+                log("按钮仍在倒计时/禁用状态，等待恢复...")
+                # 动态等待按钮文本恢复为“重新获取”或“获取验证码”，最多等 10 秒（因为 MQTT 已经等了 80 秒）
+                # wait.ele_displayed 会检测元素是否可见/可用
+                is_ready = page.wait.ele_displayed(
+                    'xpath://button[not(contains(@class, "is-disabled")) and .//span[contains(text(), "重新获取")]]',
+                    timeout=10)
+                if not is_ready:
+                    log("按钮恢复超时，尝试来回切换tab")
+                    ukey_tab.click()
+                    time.sleep(0.5)
+                    sms_tab.click()
+                    time.sleep(70)
+                    continue
+
+            log(f"点击发送验证码: {send_code_btn.text.strip()}")
+            send_code_btn.click()
+
+            # 阻塞等待 MQTT 验证码 (80秒)
+            code = mqtt_listener.get_code(timeout=80)
+
+            if code:
+                log(f"收到验证码: {code}")
+
+                # 逻辑：按钮 -> 父div -> 该div的兄弟节点中的input（且placeholder为短信验证码）
+                # 我们先跳到父div，再跳到共同的父容器，然后查找符合条件的input
+                input_ele = send_code_btn.parent('tag:div').parent().ele('css:input[placeholder="短信验证码"]')
+
+                if input_ele:
+                    log("成功定位到短信验证码输入框")
+                    # 确保元素可见并点击
+                    input_ele.click()
+                    # 先用 JS 清空，再模拟输入
+                    input_ele.run_js('this.value=""')
+                    time.sleep(0.5)
+                    # 模拟真实输入
+                    input_ele.input(code, by_js=False)
+                    log(f"已填入验证码: {code}")
+                    time.sleep(1)
+
+                    # 点击“验证”按钮（注意按钮文本可能有空格）
+                    confirm_btn = page.ele('xpath://button[.//span[contains(text(), "验 证")]]')
+                    if confirm_btn:
+                        confirm_btn.click()
+
+                    # 验证是否登录成功
+                    try:
+                        # 等待 URL 变化，出现 dashboard 即为成功
+                        if page.wait.url_change(text='dashboard', timeout=10):
+                            log("短信验证成功，已进入系统")
+                            sms_success = True
+                            break
+                        else:
+                            log(f"登录报错,等待70秒后再试")
+                            time.sleep(70)
+                    except:
+                        log("输入验证码后跳转超时")
+                else:
+                    log("未能通过相对路径定位到输入框")
+
+            else:
+                log(f"第 {attempt + 1} 次尝试：80秒内未收到 MQTT 消息")
+                # 如果这是最后一次尝试，且没收到，流程就结束了
+                if attempt < max_sms_attempts - 1:
+                    log("准备进行下一次重新发送...")
+                    # 这里不需要 sleep 太多，因为 loop 开始会重新检查按钮状态
+
+        return sms_success
 
     else:
         log("无需额外验证或未知模式")
-
+        return True
 
 def process_cookies_and_keep_alive(page, config):
     """步骤 7：获取 Cookie 并进行保活"""
@@ -225,7 +330,10 @@ def auto_login(config, mqtt_listener=None):
         page = init_browser_and_login(config)
         if not page: return
 
-        handle_verification(page, config, mqtt_listener)
+        verify_res = handle_verification(page, config, mqtt_listener)
+        if not verify_res:
+            log("二次验证失败，流程终止")
+            return
 
         process_cookies_and_keep_alive(page, config)
     except Exception as e:

@@ -105,6 +105,15 @@ class MqttCodeListener:
         except Exception as e:
             log(f"MQTT 启动失败: {e}")
 
+    def clear_code(self):
+        """
+        显式清空已收到的验证码缓存。
+        在重新点击“发送验证码”按钮前调用，防止拿到旧的验证码。
+        """
+        if self.received_code:
+            log(f"清理旧验证码缓存: {self.received_code}")
+        self.received_code = None
+
     def get_code(self, timeout=60):
         log(f"开始在主题 {self.topic} 中等待验证码...")
         self.received_code = None
