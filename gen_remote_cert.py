@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 # ================= 配置区 =================
 CERT_DIR = "certs"  # 存放 ca.key 和 ca.crt 的目录
-TARGET_IP = "58.220.240.50"  # 远程服务器 IP
+TARGET_IP = "192.168.1.2"  # 远程服务器 IP
 OUT_CRT = "remote_server.crt"  # 输出的服务器证书名
 OUT_KEY = "remote_server.key"  # 输出的服务器私钥名
 
