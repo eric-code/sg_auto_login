@@ -1,3 +1,4 @@
+import os
 import time
 import base64
 import io
@@ -313,9 +314,17 @@ def send_cookies_to_server(data, server_url):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
 
+        # 获取 CA 根证书的路径
+        ca_path = os.path.join("certs", "ca.crt")
+
         log(f"正在发送 Cookie 到服务器: {server_url}")
         # 发送 POST 请求
-        response = requests.post(server_url, headers=headers, json=data.payload, timeout=10)
+        response = requests.post(
+            server_url,
+            headers=headers,
+            json=data.payload,
+            timeout=10,
+            verify=ca_path)
         if response.status_code == 200:
             res_json = response.json()
             log("接口响应成功: " + str(res_json))
