@@ -1,9 +1,10 @@
-name: Build Windows EXE
+name: Build and Release Windows EXE
 
 on:
   push:
-    branches: [ "main" ]
-  # 允许手动触发
+    tags:
+      - 'v*'
+  # 保留手动触发，方便测试
   workflow_dispatch:
 
 permissions:
@@ -36,17 +37,18 @@ jobs:
 
     - name: Package files
       run: |
-        # 1. 创建一个临时文件夹用来存放要打包的文件
+        # 创建临时文件夹
         New-Item -ItemType Directory -Force -Path package_dist
         
-        # 2. 复制生成的 EXE 文件到该文件夹
+        # 复制 EXE 文件
         Copy-Item -Path "dist\SGAutoLoginTool.exe" -Destination "package_dist\"
         
-        # 3. 复制 config_template.json 到该文件夹
-        #    (如果你想改名为 config.json 给用户直接用，可以修改 -Destination 为 config.json)
-        Copy-Item -Path "config_template.json" -Destination "package_dist\config.json"
+        # 复制配置文件模板并改名为用户直接可用的名字
+        if (Test-Path "config_template.json") {
+            Copy-Item -Path "config_template.json" -Destination "package_dist\config.json"
+        }
         
-        # 4. 将文件夹压缩为 zip
+        # 压缩为 zip
         Compress-Archive -Path "package_dist\*" -DestinationPath "SGAutoLoginTool_Windows.zip"
 
     - name: Upload Artifact
@@ -56,11 +58,17 @@ jobs:
         path: SGAutoLoginTool_Windows.zip
         retention-days: 5
 
-    - name: Upload to Release
-      uses: softprops/action-gh-release@v1
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      # 只有在确实是推送 tag 时才执行 Release 步骤
       if: startsWith(github.ref, 'refs/tags/')
       with:
-        # 注意这里改成了 zip 文件的路径
+        # 指定要上传的文件
         files: SGAutoLoginTool_Windows.zip
+        # 自动生成 Release Note (提取 commit log)
+        generate_release_notes: true
+        # 如果是预发布版本（如 v1.0.0-beta），可以设为 true
+        draft: false
+        prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
